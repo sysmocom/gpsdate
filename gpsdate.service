@@ -5,3 +5,6 @@ Description=Set time based on GPS
 Type=simple
 EnvironmentFile=/etc/default/gpsdate
 ExecStart=/usr/sbin/gpsdate --no-detach ${GPSDATE_HOST} ${GPSDATE_PORT}
+
+[Install]
+WantedBy=multi-user.target
