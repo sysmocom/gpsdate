@@ -1,5 +1,5 @@
 /* gpsdate - small utility to set system RTC based on gpsd time 
- * (C) 2013-2015 by sysmocom - s.f.m.c. GmbH, Author: Harald Welte
+ * (C) 2013-2019 by sysmocom - s.f.m.c. GmbH, Author: Harald Welte
  * All Rights Reserved
  *
  * This program is free software; you can redistribute it and/or modify
@@ -35,6 +35,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <getopt.h>
+#include <inttypes.h>
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -52,6 +53,7 @@ static void callback(struct gps_data_t *gpsdata)
 {
 	struct timeval tv;
 	time_t time;
+	char *timestr, *lf;
 	int rc;
 
 	if (!(gpsdata->set & TIME_SET))
@@ -62,12 +64,34 @@ static void callback(struct gps_data_t *gpsdata)
 	tv.tv_usec = 0;
 
 	time = tv.tv_sec;
+	timestr = ctime(&time);
+	if (!timestr) {
+		syslog(LOG_ERR, "ctime failed");
+		timestr = "<unknown>";
+	}
+	/* god knows why ctime insists on including a LF at the end */
+	lf = strchr(timestr, '\n');
+	if (lf)
+		*lf = '\0';
+
+	syslog(LOG_DEBUG, "%s: gpsdate->set=0x%08"PRIu64"x status=%u sats_used=%u\n",
+		timestr, gpsdata->set, gpsdata->status, gpsdata->satellites_used);
+
+	if (gpsdata->status == 0) {
+		syslog(LOG_INFO, "%s: discarding; no fix yet\n", timestr);
+		return;
+	}
+
+	if (gpsdata->satellites_used == 0) {
+		syslog(LOG_INFO, "%s: discarding; 0 satellites used\n", timestr);
+		return;
+	}
 
 	rc = settimeofday(&tv, NULL);
 	gps_close(gpsdata);
 	if (rc == 0) {
 		syslog(LOG_NOTICE, "Successfully set RTC time to GPSD time:"
-			" %s", ctime(&time));
+			" %s\n", timestr);
 		closelog();
 		exit(EXIT_SUCCESS);
 	} else {
