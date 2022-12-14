@@ -55,13 +55,19 @@ static void callback(struct gps_data_t *gpsdata)
 	time_t time;
 	char *timestr, *lf;
 	int rc;
+	int status;
 
 	if (!(gpsdata->set & TIME_SET))
 		return;
 
+#if GPSD_API_MAJOR_VERSION >= 9 && GPSD_API_MINOR_VERSION >= 0
+	tv.tv_sec = gpsdata->fix.time.tv_sec;
+	tv.tv_usec = gpsdata->fix.time.tv_nsec / 1000;
+#else
 	tv.tv_sec = gpsdata->fix.time;
 	/* FIXME: use the fractional part for microseconds */
 	tv.tv_usec = 0;
+#endif
 
 	time = tv.tv_sec;
 	timestr = ctime(&time);
@@ -74,10 +80,16 @@ static void callback(struct gps_data_t *gpsdata)
 	if (lf)
 		*lf = '\0';
 
-	syslog(LOG_DEBUG, "%s: gpsdate->set=0x%08"PRIu64"x status=%u sats_used=%u\n",
-		timestr, gpsdata->set, gpsdata->status, gpsdata->satellites_used);
+#if GPSD_API_MAJOR_VERSION >= 10 && GPSD_API_MINOR_VERSION >= 0
+	status = gpsdata->fix.status;
+#else
+	status = gpsdata->status;
+#endif
 
-	if (gpsdata->status == 0) {
+	syslog(LOG_DEBUG, "%s: gpsdate->set=0x%08"PRIu64"x status=%u sats_used=%u\n",
+		timestr, gpsdata->set, status, gpsdata->satellites_used);
+
+	if (status == 0) {
 		syslog(LOG_INFO, "%s: discarding; no fix yet\n", timestr);
 		return;
 	}
@@ -149,6 +161,18 @@ static int osmo_daemonize(void)
 	return 0;
 }
 
+static inline int compat_gps_read(struct gps_data_t *data)
+{
+/* API break in gpsd 6bba8b329fc7687b15863d30471d5af402467802 */
+#if GPSD_API_MAJOR_VERSION >= 7 && GPSD_API_MINOR_VERSION >= 0
+	return gps_read(data, NULL, 0);
+#elif GPSD_API_MAJOR_VERSION >= 5
+	return gps_read(data);
+#else
+	return gps_poll(data);
+#endif
+}
+
 /* local copy, as the libgps official version ignores gps_read() result */
 static int my_gps_mainloop(struct gps_data_t *gdata,
 			   int timeout,
@@ -160,7 +184,7 @@ static int my_gps_mainloop(struct gps_data_t *gdata,
 		if (!gps_waiting(gdata, timeout)) {
 			return -1;
 		} else {
-			rc = gps_read(gdata);
+			rc = compat_gps_read(gdata);
 			if (rc < 0)
 				return rc;
 			(*hook)(gdata);
